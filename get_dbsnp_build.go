@@ -3,11 +3,12 @@ package main
 import (
 	"bufio"
 	"encoding/csv"
+	"errors"
 	"fmt"
+	"github.com/cenkalti/backoff"
+	"github.com/jlaffaye/ftp"
 	"io"
 	"log"
-	/*"net/http"*/
-	"github.com/jlaffaye/ftp"
 	"os"
 	"regexp"
 	"sort"
@@ -49,11 +50,11 @@ func main() {
 	writer := csv.NewWriter(bufio.NewWriter(csvOutputFile))
 
 	for {
-		line, error := reader.Read()
-		if error == io.EOF {
+		line, err := reader.Read()
+		if err == io.EOF {
 			break
-		} else if error != nil {
-			log.Fatal(error)
+		} else if err != nil {
+			log.Fatal(err)
 		}
 
 		species := Species{
@@ -75,7 +76,7 @@ func main() {
 			Build151Status:        line[15],
 		}
 
-		// Search dbSNP FTP for folder ftp://ftp.ncbi.nlm.nih.gov/snp/organisms/<DatabaseName>/database/organism_data/
+		// Connect to NCBI FTP
 		client, err := ftp.DialTimeout("ftp.ncbi.nlm.nih.gov:21", 2*time.Second)
 		if err != nil {
 			log.Fatal(err)
@@ -86,9 +87,21 @@ func main() {
 		}
 
 		fmt.Println(species.DatabaseName)
-		entries, err := client.List("/snp/organisms/" + species.DatabaseName + "/database/organism_data/")
+
+		// Search FTP for dbSNP folder ftp://ftp.ncbi.nlm.nih.gov/snp/organisms/<DatabaseName>/database/organism_data/
+		var entries []*ftp.Entry
+		fn := func() error {
+			entries, err = list(client, species)
+			if err != nil {
+				log.Print("Error on client.List: ", err)
+			}
+			return err
+		}
+
+		err = backoff.Retry(fn, backoff.WithMaxTries(backoff.NewConstantBackOff(3*time.Second), 2))
 		if err != nil {
-			log.Print("Error on client.List: ", err)
+			log.Println(err)
+			writer.Write(line)
 			continue
 		} else {
 			log.Print("Getting build numbers for ", species.DatabaseName)
@@ -116,10 +129,21 @@ func main() {
 
 			// Print to screen
 			fmt.Println(builds[len(builds)-1])
+		} else {
+			fmt.Println("Build numbers not found for ", species.DatabaseName)
 		}
 
 		// Write (possibly modified) line to CSV
 		writer.Write(line)
 		writer.Flush()
 	}
+}
+
+func list(client *ftp.ServerConn, species Species) ([]*ftp.Entry, error) {
+	entries, err := client.List("/snp/organisms/" + species.DatabaseName + "/database/organism_data/")
+	if err != nil {
+		return nil, errors.New("Error on client.List: " + err.Error())
+	}
+
+	return entries, nil
 }
