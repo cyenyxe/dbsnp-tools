@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"time"
 )
 
 type Species struct {
@@ -75,7 +76,7 @@ func main() {
 		}
 
 		// Search dbSNP FTP for folder ftp://ftp.ncbi.nlm.nih.gov/snp/organisms/<DatabaseName>/database/organism_data/
-		client, err := ftp.Dial("ftp.ncbi.nlm.nih.gov:21")
+		client, err := ftp.DialTimeout("ftp.ncbi.nlm.nih.gov:21", 2*time.Second)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -87,7 +88,10 @@ func main() {
 		fmt.Println(species.DatabaseName)
 		entries, err := client.List("/snp/organisms/" + species.DatabaseName + "/database/organism_data/")
 		if err != nil {
+			log.Print("Error on client.List: ", err)
 			continue
+		} else {
+			log.Print("Getting build numbers for ", species.DatabaseName)
 		}
 
 		// Get build numbers
@@ -105,12 +109,16 @@ func main() {
 			}
 		}
 
-		// Get greatest build number
-		sort.Ints(builds)
-		line[3] = strconv.Itoa(builds[len(builds)-1])
+		if len(builds) > 0 {
+			// Get greatest build number
+			sort.Ints(builds)
+			line[3] = strconv.Itoa(builds[len(builds)-1])
 
-		// Print to screen and write to CSV
-		fmt.Println(builds[len(builds)-1])
+			// Print to screen
+			fmt.Println(builds[len(builds)-1])
+		}
+
+		// Write (possibly modified) line to CSV
 		writer.Write(line)
 		writer.Flush()
 	}
